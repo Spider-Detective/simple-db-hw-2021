@@ -79,7 +79,7 @@ public class HeapFile implements DbFile {
             // set the file pointer
             raf.seek(pid.getPageNumber() * pageSize);
             if (raf.read(buf) == -1) {
-                throw new IllegalArgumentException("PageId: " + pid + " doea not exist in the disk.");
+                throw new IllegalArgumentException("PageId: " + pid + " does not exist in the disk.");
             }
             heapPage = new HeapPage((HeapPageId) pid, buf);
         } catch (IOException e) {

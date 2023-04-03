@@ -95,7 +95,7 @@ public class Tuple implements Serializable {
     public String toString() {
         return "Tuple{" +
                 "tupleDesc=" + tupleDesc +
-                "\nfields=" + fields +
+                "\nfields=" + Arrays.toString(fields) +
                 "}";
     }
 
