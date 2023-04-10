@@ -1,7 +1,13 @@
 package simpledb.execution;
 
 import simpledb.common.Type;
+import simpledb.storage.Field;
 import simpledb.storage.Tuple;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Knows how to compute some aggregate over a set of StringFields.
@@ -9,6 +15,12 @@ import simpledb.storage.Tuple;
 public class StringAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
+
+    private int gbfield;
+    private Type gbfieldtype;
+    private int afield;
+    private Op op;
+    private Map<Field, List<Field>> groupMap;
 
     /**
      * Aggregate constructor
@@ -21,6 +33,11 @@ public class StringAggregator implements Aggregator {
 
     public StringAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
         // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.op = what;
+        this.groupMap = new HashMap<>();
     }
 
     /**
@@ -29,6 +46,11 @@ public class StringAggregator implements Aggregator {
      */
     public void mergeTupleIntoGroup(Tuple tup) {
         // some code goes here
+        Field key = (gbfield == NO_GROUPING) ? NO_GROUPING_FIELD : tup.getField(gbfield);
+        if (!groupMap.containsKey(key)) {
+            groupMap.put(key, new ArrayList<>());
+        }
+        groupMap.get(key).add(tup.getField(afield));
     }
 
     /**
@@ -41,7 +63,7 @@ public class StringAggregator implements Aggregator {
      */
     public OpIterator iterator() {
         // some code goes here
-        throw new UnsupportedOperationException("please implement me for lab2");
+        return new AggregateIter(groupMap, gbfield, gbfieldtype, op);
     }
 
 }
