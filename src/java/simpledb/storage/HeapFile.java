@@ -92,6 +92,11 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // some code goes here
         // not necessary for lab1
+        int pageSize = BufferPool.getPageSize();
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            raf.seek(page.getId().getPageNumber() * pageSize);
+            raf.write(page.getPageData());
+        }
     }
 
     /**
@@ -105,15 +110,39 @@ public class HeapFile implements DbFile {
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
-        return null;
+        for (int i = 0; i < numPages(); i++) {
+            HeapPageId pageId = new HeapPageId(getId(), i);
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+            if (page == null || page.getNumEmptySlots() == 0) {
+                continue;
+            }
+            page.insertTuple(t);
+//            page.markDirty(true, tid);
+            return Collections.singletonList(page);
+        }
+
+        // create new page
+        HeapPageId pageId = new HeapPageId(getId(), numPages());
+        HeapPage newPage = new HeapPage(pageId, HeapPage.createEmptyPageData());
+        newPage.insertTuple(t);
+//        newPage.markDirty(true, tid);
+        writePage(newPage);
+
+        return Collections.singletonList(newPage);
         // not necessary for lab1
     }
 
     // see DbFile.java for javadocs
-    public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
+    public List<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // some code goes here
-        return null;
+        HeapPageId pageId = (HeapPageId) t.getRecordId().getPageId();
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+        if (page == null || page.getNumEmptySlots() == page.numSlots) {
+            throw new DbException("Page not exist, or page is empty");
+        }
+        page.deleteTuple(t);
+        return Collections.singletonList(page);
         // not necessary for lab1
     }
 

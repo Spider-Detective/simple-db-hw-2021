@@ -7,8 +7,8 @@ import simpledb.transaction.TransactionId;
 import java.io.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -33,7 +33,7 @@ public class BufferPool {
     public static final int DEFAULT_PAGES = 50;
 
     private int numPages;
-    private Map<PageId, Page> pageMap;
+    private Map<PageId, Page> pageBufferMap;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -42,7 +42,7 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         this.numPages = numPages;
-        this.pageMap = new HashMap<>();
+        this.pageBufferMap = new HashMap<>();
     }
     
     public static int getPageSize() {
@@ -76,17 +76,17 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if (pageMap.containsKey(pid)) {
-            return pageMap.get(pid);
+        if (pageBufferMap.containsKey(pid)) {
+            return pageBufferMap.get(pid);
         }
 
-        if (pageMap.keySet().size() == numPages) {
+        if (pageBufferMap.keySet().size() == numPages) {
             throw new DbException("Stored pages has hit the page limit: " + numPages);
         }
 
         DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
-        pageMap.put(pid, dbFile.readPage(pid));
-        return pageMap.get(pid);
+        pageBufferMap.put(pid, dbFile.readPage(pid));
+        return pageBufferMap.get(pid);
     }
 
     /**
@@ -98,7 +98,7 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
      */
-    public  void unsafeReleasePage(TransactionId tid, PageId pid) {
+    public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -151,6 +151,12 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        List<Page> pages = Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+        for (Page p : pages) {
+            p.markDirty(true, tid);
+            // overwrite the updated pages to the cache
+            pageBufferMap.put(p.getId(), p);
+        }
     }
 
     /**
@@ -166,10 +172,15 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
+    public void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        List<Page> pages = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
+        for (Page p : pages) {
+            p.markDirty(true, tid);
+            pageBufferMap.put(p.getId(), p);
+        }
     }
 
     /**

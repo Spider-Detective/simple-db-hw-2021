@@ -1,10 +1,7 @@
 package simpledb.storage;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -112,5 +109,41 @@ public class Tuple implements Serializable {
      * */
     public void resetTupleDesc(TupleDesc td) {
         this.tupleDesc = td;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == this) {
+            return true;
+        }
+
+        if (!(o instanceof Tuple)) {
+            return false;
+        }
+
+        Tuple other = (Tuple) o;
+        if (!Objects.equals(this.tupleDesc, other.tupleDesc) ||
+                !Objects.equals(this.recordId, other.recordId) ||
+                this.fields.length != other.fields.length) {
+            return false;
+        }
+
+        for (int i = 0; i < this.fields.length; i++) {
+            if (!Objects.equals(this.fields[i], other.fields[i])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public int hashCode() {
+        // If you want to use TupleDesc as keys for HashMap, implement this so
+        // that equal objects have equals hashCode() results
+        int result = 31 * this.tupleDesc.hashCode() + this.recordId.hashCode();
+        for (int i = 0; i < this.fields.length; i++) {
+            result += 31 * result + this.fields[i].hashCode();
+        }
+        return result;
     }
 }

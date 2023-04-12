@@ -25,6 +25,9 @@ public class HeapPage implements Page {
     final Tuple[] tuples;
     final int numSlots;
 
+    private boolean isDirty;
+    private TransactionId tid;
+
     byte[] oldData;
     private final Byte oldDataLock= (byte) 0;
 
@@ -245,6 +248,13 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        int tupleNo = t.getRecordId().getTupleNumber();
+        if ((tupleNo < 0 || tupleNo >= numSlots) || !isSlotUsed(tupleNo) ||
+                !tuples[tupleNo].equals(t)) {
+            throw new DbException("Tuple does not exist");
+        }
+        tuples[tupleNo] = null;
+        markSlotUsed(tupleNo, false);
     }
 
     /**
@@ -257,6 +267,23 @@ public class HeapPage implements Page {
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        if (getNumEmptySlots() == 0) {
+            throw new DbException("Page is full");
+        }
+
+        if (!td.equals(t.getTupleDesc())) {
+            throw new DbException("Tuple Desc is mismatched");
+        }
+
+        for (int i = 0; i < numSlots; i++) {
+            if (!isSlotUsed(i)) {
+                // set new record id since we put the tuple into a new page
+                t.setRecordId(new RecordId(pid, i));
+                this.tuples[i] = t;
+                markSlotUsed(i, true);
+                return;
+            }
+        }
     }
 
     /**
@@ -266,6 +293,8 @@ public class HeapPage implements Page {
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
 	// not necessary for lab1
+        this.isDirty = dirty;
+        this.tid = tid;
     }
 
     /**
@@ -274,7 +303,7 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
 	// Not necessary for lab1
-        return null;      
+        return isDirty ? tid : null;
     }
 
     /**
@@ -288,6 +317,7 @@ public class HeapPage implements Page {
                 count++;
             }
         }
+//        System.out.println("1111: " + count);
         return count;
     }
 
@@ -306,6 +336,15 @@ public class HeapPage implements Page {
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
         // not necessary for lab1
+        if (value) {
+            header[i >> 3] |= (1 << (i & 7));
+        } else {
+//            System.out.println("1111: before " + Arrays.toString(header) + " " + i);
+
+            header[i >> 3] &= ~(1 << (i & 7));
+//            System.out.println("1111: " + Arrays.toString(header) + " " + i);
+
+        }
     }
 
     /**

@@ -201,6 +201,7 @@ public class TupleDesc implements Serializable {
      * @return true if the object is equal to this TupleDesc.
      */
 
+    @Override
     public boolean equals(Object o) {
         if (o == this) {
             return true;
@@ -225,6 +226,7 @@ public class TupleDesc implements Serializable {
         return true;
     }
 
+    @Override
     public int hashCode() {
         // If you want to use TupleDesc as keys for HashMap, implement this so
         // that equal objects have equals hashCode() results
