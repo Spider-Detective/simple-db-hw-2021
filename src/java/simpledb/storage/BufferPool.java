@@ -32,8 +32,8 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
-    private int numPages;
-    private Map<PageId, Page> pageBufferMap;
+    private final int numPages;
+    private final LRUCache<PageId, Page> pageCache;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -42,7 +42,7 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         this.numPages = numPages;
-        this.pageBufferMap = new HashMap<>();
+        this.pageCache = new LRUCache<>(numPages);
     }
     
     public static int getPageSize() {
@@ -76,17 +76,17 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        if (pageBufferMap.containsKey(pid)) {
-            return pageBufferMap.get(pid);
+        if (pageCache.contains(pid)) {
+            return pageCache.get(pid);
         }
 
-        if (pageBufferMap.keySet().size() == numPages) {
-            throw new DbException("Stored pages has hit the page limit: " + numPages);
+        if (pageCache.size() == numPages) {
+            evictPage();
         }
 
         DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
-        pageBufferMap.put(pid, dbFile.readPage(pid));
-        return pageBufferMap.get(pid);
+        pageCache.put(pid, dbFile.readPage(pid));
+        return pageCache.get(pid);
     }
 
     /**
@@ -155,7 +155,7 @@ public class BufferPool {
         for (Page p : pages) {
             p.markDirty(true, tid);
             // overwrite the updated pages to the cache
-            pageBufferMap.put(p.getId(), p);
+            pageCache.put(p.getId(), p);
         }
     }
 
@@ -179,7 +179,7 @@ public class BufferPool {
         List<Page> pages = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
         for (Page p : pages) {
             p.markDirty(true, tid);
-            pageBufferMap.put(p.getId(), p);
+            pageCache.put(p.getId(), p);
         }
     }
 
@@ -191,7 +191,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        for (PageId pid : pageCache.keySet()) {
+            flushPage(pid);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -203,22 +205,21 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        pageCache.discard(pid);
     }
 
     /**
      * Flushes a certain page to disk
      * @param pid an ID indicating the page to flush
      */
-    private synchronized  void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+    private synchronized void flushPage(PageId pid) throws IOException {
+        Page page = pageCache.get(pid);
+        flushPage(pid, page);
     }
 
     /** Write all pages of the specified transaction to disk.
      */
-    public synchronized  void flushPages(TransactionId tid) throws IOException {
+    public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -227,9 +228,24 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+    private synchronized void evictPage() throws DbException {
+        Map.Entry<PageId, Page> evicted = pageCache.evict();
+        if (evicted == null) {
+            return;
+        }
+
+        try {
+            flushPage(evicted.getKey(), evicted.getValue());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void flushPage(PageId pid, Page page) throws IOException {
+        if (page != null && page.isDirty() != null) {
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
+            page.markDirty(false, null);
+        }
     }
 
 }
