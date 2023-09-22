@@ -1,12 +1,16 @@
 package simpledb.optimizer;
 
 import simpledb.common.Database;
+import simpledb.common.DbException;
 import simpledb.common.Type;
 import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionAbortedException;
+import simpledb.transaction.TransactionId;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -68,6 +72,11 @@ public class TableStats {
      */
     static final int NUM_HIST_BINS = 100;
 
+    private final HeapFile heapFile;
+    private final int ioCostPerPage;
+    private int tupleCount;
+    public IntHistogram[] intHistArr;
+
     /**
      * Create a new TableStats object, that keeps track of statistics on each
      * column of a table
@@ -87,6 +96,58 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.ioCostPerPage = ioCostPerPage;
+        this.tupleCount = 0;
+
+        this.heapFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableid);
+        TupleDesc tupleDesc = heapFile.getTupleDesc();
+        this.intHistArr = new IntHistogram[tupleDesc.numFields()];
+        int[] minArr = new int[tupleDesc.numFields()];
+        Arrays.fill(minArr, Integer.MAX_VALUE);
+        int[] maxArr = new int[tupleDesc.numFields()];
+        Arrays.fill(maxArr, Integer.MIN_VALUE);
+        DbFileIterator iterator = heapFile.iterator(new TransactionId());
+        try {
+            iterator.open();
+            while (iterator.hasNext()) {
+                this.tupleCount++;
+                Tuple tuple = iterator.next();
+                for (int i = 0; i < tupleDesc.numFields(); i++) {
+                    if (Type.INT_TYPE.equals(tuple.getField(i).getType())) {
+                        int value = ((IntField) tuple.getField(i)).getValue();
+                        if (value < minArr[i]) {
+                            minArr[i] = value;
+                        }
+                        if (value > maxArr[i]) {
+                            maxArr[i] = value;
+                        }
+                    }
+                }
+            }
+        } catch (DbException e) {
+            e.printStackTrace();
+        } catch (TransactionAbortedException e) {
+            e.printStackTrace();
+        }
+
+        for (int i = 0; i < tupleDesc.numFields(); i++) {
+            if (Type.INT_TYPE.equals(tupleDesc.getFieldType(i))) {
+                intHistArr[i] = new IntHistogram(NUM_HIST_BINS, minArr[i], maxArr[i]);
+                try {
+                    iterator.rewind();
+                    while (iterator.hasNext()) {
+                        Tuple tuple = iterator.next();
+                        intHistArr[i].addValue(((IntField) tuple.getField(i)).getValue());
+                    }
+                } catch (DbException e) {
+                    e.printStackTrace();
+                } catch (TransactionAbortedException e) {
+                    e.printStackTrace();
+                }
+
+            }
+        }
+        iterator.close();
     }
 
     /**
@@ -103,7 +164,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        return this.heapFile.numPages() * ioCostPerPage;
     }
 
     /**
@@ -117,7 +178,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int) (tupleCount * selectivityFactor);
     }
 
     /**
@@ -150,6 +211,9 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
+        if (Type.INT_TYPE.equals(constant.getType())) {
+            return intHistArr[field].estimateSelectivity(op, ((IntField) constant).getValue());
+        }
         return 1.0;
     }
 
@@ -158,7 +222,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return tupleCount;
     }
 
 }
