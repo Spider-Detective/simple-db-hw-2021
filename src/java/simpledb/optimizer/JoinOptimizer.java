@@ -212,6 +212,13 @@ public class JoinOptimizer {
      * @return a set of all subsets of the specified size
      */
     public <T> Set<Set<T>> enumerateSubsets(List<T> v, int size) {
+        /* This can be optimized to become an iterator
+         * Use a bitmask. When calling iterator.next():
+         * increment the bitmask from 0, if the current int has "size" # of 1s
+         * that means we found a subset of the required size.
+         * AND the bitmask with the list and get the chosen elements
+         */
+
         Set<Set<T>> els = new HashSet<>();
         els.add(new HashSet<>());
         // Iterator<Set> it;
@@ -257,10 +264,31 @@ public class JoinOptimizer {
             Map<String, TableStats> stats,
             Map<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-
-        // some code goes here
-        //Replace the following
-        return joins;
+        //  looping through subset sizes, subsets, and sub-plans of subsets,
+        //  calling computeCostAndCardOfSubplan and building a PlanCache object that stores
+        //  the minimal-cost way to perform each subset join.
+        PlanCache pc = new PlanCache();
+        for (int i = 1; i <= joins.size(); i++) {
+            for (Set<LogicalJoinNode> joinNodeSet : enumerateSubsets(joins, i)) {
+                CostCard bestCc = null;
+                double bestCost = Double.MAX_VALUE;
+                for (LogicalJoinNode joinNode : joinNodeSet) {
+                    CostCard cc = computeCostAndCardOfSubplan(stats, filterSelectivities, joinNode, joinNodeSet, bestCost, pc);
+                    if (cc != null && cc.cost < bestCost) {
+                        bestCost = cc.cost;
+                        bestCc = cc;
+                    }
+                }
+                if (bestCc != null) {
+                    pc.addPlan(joinNodeSet, bestCc.cost, bestCc.card, bestCc.plan);
+                }
+            }
+        }
+        List<LogicalJoinNode> res = pc.getOrder(new HashSet<>(joins));
+        if (explain) {
+            printJoins(res, pc, stats, filterSelectivities);
+        }
+        return res;
     }
 
     // ===================== Private Methods =================================
