@@ -122,7 +122,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
-        lockManager.releaseAllLocks(tid);
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
@@ -149,9 +149,27 @@ public class BufferPool {
                 e.printStackTrace();
             }
         } else {
-            // rollback(tid);
+             rollback(tid);
         }
         lockManager.releaseAllLocks(tid);
+    }
+
+    // remove the dirty pages and reload from disk
+    private void rollback(TransactionId tid) {
+        for (PageId pid : pageCache.keySet()) {
+            Page page = pageCache.internalGet(pid);
+            if (page != null && page.isDirty() != null && page.isDirty().equals(tid)) {
+                pageCache.discard(pid);
+                try {
+                    Page cleanPage = Database.getBufferPool().getPage(tid, pid, Permissions.READ_ONLY);
+                    pageCache.put(pid, cleanPage);
+                } catch (TransactionAbortedException e) {
+                    e.printStackTrace();
+                } catch (DbException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     /**
@@ -244,6 +262,12 @@ public class BufferPool {
     public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        for (PageId pid : pageCache.keySet()) {
+            Page page = pageCache.internalGet(pid);
+            if (page != null && page.isDirty() != null && page.isDirty().equals(tid)) {
+                flushPage(pid);
+            }
+        }
     }
 
     /**

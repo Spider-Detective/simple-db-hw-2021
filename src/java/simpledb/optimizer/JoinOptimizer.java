@@ -217,6 +217,7 @@ public class JoinOptimizer {
          * increment the bitmask from 0, if the current int has "size" # of 1s
          * that means we found a subset of the required size.
          * AND the bitmask with the list and get the chosen elements
+         * https://www.geeksforgeeks.org/print-subsets-given-size-set/
          */
 
         Set<Set<T>> els = new HashSet<>();

@@ -62,6 +62,11 @@ public class LRUPageCache<K> {
         return res;
     }
 
+    // get page without moving page to head, used internally
+    public synchronized Page internalGet(K key) {
+        return map.containsKey(key) ? map.get(key).val : null;
+    }
+
     public synchronized void put(K key, Page value) throws DbException {
         if (map.containsKey(key)) {
             map.get(key).val = value;

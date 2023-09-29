@@ -140,7 +140,7 @@ public class Tuple implements Serializable {
     public int hashCode() {
         // If you want to use TupleDesc as keys for HashMap, implement this so
         // that equal objects have equals hashCode() results
-        int result = 31 * this.tupleDesc.hashCode() + this.recordId.hashCode();
+        int result = 31 * this.tupleDesc.hashCode() + (this.recordId == null ? 0 : this.recordId.hashCode());
         for (int i = 0; i < this.fields.length; i++) {
             result += 31 * result + this.fields[i].hashCode();
         }
