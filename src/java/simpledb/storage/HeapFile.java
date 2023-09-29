@@ -114,10 +114,11 @@ public class HeapFile implements DbFile {
             HeapPageId pageId = new HeapPageId(getId(), i);
             HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
             if (page == null || page.getNumEmptySlots() == 0) {
+                Database.getBufferPool().unsafeReleasePage(tid, pageId);
                 continue;
             }
             page.insertTuple(t);
-//            page.markDirty(true, tid);
+            page.markDirty(true, tid);
             return Collections.singletonList(page);
         }
 
@@ -125,7 +126,7 @@ public class HeapFile implements DbFile {
         HeapPageId pageId = new HeapPageId(getId(), numPages());
         HeapPage newPage = new HeapPage(pageId, HeapPage.createEmptyPageData());
         newPage.insertTuple(t);
-//        newPage.markDirty(true, tid);
+        newPage.markDirty(true, tid);
         writePage(newPage);
 
         return Collections.singletonList(newPage);
@@ -142,6 +143,7 @@ public class HeapFile implements DbFile {
             throw new DbException("Page not exist, or page is empty");
         }
         page.deleteTuple(t);
+        page.markDirty(true, tid);
         return Collections.singletonList(page);
         // not necessary for lab1
     }

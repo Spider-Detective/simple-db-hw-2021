@@ -1,14 +1,15 @@
 package simpledb.storage;
 
+import simpledb.transaction.LockManager;
 import simpledb.common.*;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -33,7 +34,8 @@ public class BufferPool {
     public static final int DEFAULT_PAGES = 50;
 
     private final int numPages;
-    private final LRUCache<PageId, Page> pageCache;
+    private final LRUPageCache<PageId> pageCache;
+    private final LockManager lockManager;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -42,7 +44,8 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         this.numPages = numPages;
-        this.pageCache = new LRUCache<>(numPages);
+        this.pageCache = new LRUPageCache<>(numPages);
+        this.lockManager = new LockManager();
     }
     
     public static int getPageSize() {
@@ -76,6 +79,13 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
+        long start = System.currentTimeMillis();
+        long timeout = new Random().nextInt(2000);
+        while (!lockManager.lock(tid, pid, perm)) {
+            if (System.currentTimeMillis() - start > timeout) {
+                throw new TransactionAbortedException();
+            }
+        }
         if (pageCache.contains(pid)) {
             return pageCache.get(pid);
         }
@@ -101,6 +111,7 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockManager.unlock(tid, pid);
     }
 
     /**
@@ -111,13 +122,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockManager.releaseAllLocks(tid);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return lockManager.holdsLock(tid, p);
     }
 
     /**
@@ -130,6 +142,16 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        if (commit) {
+            try {
+                flushPages(tid);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } else {
+            // rollback(tid);
+        }
+        lockManager.releaseAllLocks(tid);
     }
 
     /**
@@ -229,16 +251,16 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized void evictPage() throws DbException {
-        Map.Entry<PageId, Page> evicted = pageCache.evict();
+        Map.Entry<PageId, Page> evicted = pageCache.evictCleanPage();
         if (evicted == null) {
             return;
         }
 
-        try {
-            flushPage(evicted.getKey(), evicted.getValue());
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+//        try {
+//            flushPage(evicted.getKey(), evicted.getValue());
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
     }
 
     private void flushPage(PageId pid, Page page) throws IOException {

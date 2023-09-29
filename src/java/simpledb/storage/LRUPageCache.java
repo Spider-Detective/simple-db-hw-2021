@@ -1,19 +1,20 @@
 package simpledb.storage;
 
+import simpledb.common.DbException;
+
 import java.util.AbstractMap;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class LRUCache<K, V> {
+public class LRUPageCache<K> {
     private class DLinkNode {
         private final K key;
-        private V val;
+        private Page val;
         private DLinkNode prev;
         private DLinkNode next;
 
-        public DLinkNode(K key, V val) {
+        public DLinkNode(K key, Page val) {
             this.key = key;
             this.val = val;
         }
@@ -29,7 +30,7 @@ public class LRUCache<K, V> {
     int capacity;
     int size;
 
-    public LRUCache(int capacity) {
+    public LRUPageCache(int capacity) {
         map = new ConcurrentHashMap<>();
         head = new DLinkNode(null, null);
         tail = new DLinkNode(null, null);
@@ -51,8 +52,8 @@ public class LRUCache<K, V> {
         return map.keySet();
     }
 
-    public synchronized V get(K key) {
-        V res = null;
+    public synchronized Page get(K key) {
+        Page res = null;
         if (map.containsKey(key)) {
             DLinkNode node = map.get(key);
             moveToHead(node);
@@ -61,13 +62,13 @@ public class LRUCache<K, V> {
         return res;
     }
 
-    public synchronized void put(K key, V value) {
+    public synchronized void put(K key, Page value) throws DbException {
         if (map.containsKey(key)) {
             map.get(key).val = value;
             moveToHead(map.get(key));
         } else {
             if (size == capacity) {
-                evict();
+                evictCleanPage();
             }
 
             DLinkNode node = new DLinkNode(key, value);
@@ -78,14 +79,21 @@ public class LRUCache<K, V> {
     }
 
     // remove the last node
-    public synchronized Map.Entry<K, V> evict() {
+    public synchronized Map.Entry<K, Page> evictCleanPage() throws DbException {
         if (tail.prev == head) {
             return null;
         }
-        return discard(tail.prev.key);
+        DLinkNode curr = tail;
+        while (curr != head) {
+            if (curr.val != null && curr.val.isDirty() == null) {
+                return discard(curr.key);
+            }
+            curr = curr.prev;
+        }
+        throw new DbException("No clean page for eviction");
     }
 
-    public synchronized Map.Entry<K, V> discard(K key) {
+    public synchronized Map.Entry<K, Page> discard(K key) {
         if (!map.containsKey(key)) {
             return null;
         }
