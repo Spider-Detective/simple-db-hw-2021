@@ -635,29 +635,48 @@ public class BTreeFile implements DbFile {
 	 * Steal tuples from a sibling and copy them to the given page so that both pages are at least
 	 * half full.  Update the parent's entry so that the key matches the key field of the first
 	 * tuple in the right-hand page.
-	 * 
+	 *
 	 * @param page - the leaf page which is less than half full
 	 * @param sibling - the sibling which has tuples to spare
 	 * @param parent - the parent of the two leaf pages
 	 * @param entry - the entry in the parent pointing to the two leaf pages
 	 * @param isRightSibling - whether the sibling is a right-sibling
-	 * 
+	 *
 	 * @throws DbException
 	 */
 	public void stealFromLeafPage(BTreeLeafPage page, BTreeLeafPage sibling,
 			BTreeInternalPage parent, BTreeEntry entry, boolean isRightSibling) throws DbException {
-		// some code goes here
-        //
         // Move some of the tuples from the sibling to the page so
 		// that the tuples are evenly distributed. Be sure to update
 		// the corresponding parent entry.
+		int expectedSize = (page.getNumTuples() + sibling.getNumTuples()) / 2;
+		int moveSize = expectedSize - page.getNumTuples();;
+		if (moveSize <= 0) {
+			return;
+		}
+
+		Iterator<Tuple> iterator = isRightSibling ? sibling.iterator() : sibling.reverseIterator();
+		Tuple next = null;
+		while (iterator.hasNext() && moveSize > 0) {
+			next = iterator.next();
+			sibling.deleteTuple(next);
+			page.insertTuple(next);
+			moveSize--;
+		}
+
+		// parent key needs to be the first tuple of the right node
+		// if move tuples from left to right, parent key will be `next`
+		// if move tuples from right to left, parent key will be `iterator.next()`
+		Tuple newParentKey = isRightSibling ? iterator.next() : next;
+		entry.setKey(newParentKey.getField(keyField));
+		parent.updateEntry(entry);
 	}
 
 	/**
 	 * Handle the case when an internal page becomes less than half full due to deletions.
 	 * If one of its siblings has extra entries, redistribute those entries.
 	 * Otherwise merge with one of the siblings. Update pointers as needed.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param page - the internal page which is less than half full
@@ -667,19 +686,19 @@ public class BTreeFile implements DbFile {
 	 * @see #mergeInternalPages(TransactionId, Map, BTreeInternalPage, BTreeInternalPage, BTreeInternalPage, BTreeEntry)
 	 * @see #stealFromLeftInternalPage(TransactionId, Map, BTreeInternalPage, BTreeInternalPage, BTreeInternalPage, BTreeEntry)
 	 * @see #stealFromRightInternalPage(TransactionId, Map, BTreeInternalPage, BTreeInternalPage, BTreeInternalPage, BTreeEntry)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws IOException
 	 * @throws TransactionAbortedException
 	 */
 	private void handleMinOccupancyInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
-			BTreeInternalPage page, BTreeInternalPage parent, BTreeEntry leftEntry, BTreeEntry rightEntry) 
+			BTreeInternalPage page, BTreeInternalPage parent, BTreeEntry leftEntry, BTreeEntry rightEntry)
 					throws DbException, IOException, TransactionAbortedException {
 		BTreePageId leftSiblingId = null;
 		BTreePageId rightSiblingId = null;
 		if(leftEntry != null) leftSiblingId = leftEntry.getLeftChild();
 		if(rightEntry != null) rightSiblingId = rightEntry.getRightChild();
-		
+
 		int maxEmptySlots = page.getMaxEntries() - page.getMaxEntries()/2; // ceiling
 		if(leftSiblingId != null) {
 			BTreeInternalPage leftSibling = (BTreeInternalPage) getPage(tid, dirtypages, leftSiblingId, Permissions.READ_WRITE);
@@ -704,13 +723,13 @@ public class BTreeFile implements DbFile {
 			}
 		}
 	}
-	
+
 	/**
 	 * Steal entries from the left sibling and copy them to the given page so that both pages are at least
-	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the 
+	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the
 	 * parent is "pulled down" to the right-hand page, and the last key in the left-hand page is "pushed up"
 	 * to the parent.  Update parent pointers as needed.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param page - the internal page which is less than half full
@@ -718,7 +737,7 @@ public class BTreeFile implements DbFile {
 	 * @param parent - the parent of the two internal pages
 	 * @param parentEntry - the entry in the parent pointing to the two internal pages
 	 * @see #updateParentPointers(TransactionId, Map, BTreeInternalPage)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws TransactionAbortedException
 	 */
@@ -730,14 +749,45 @@ public class BTreeFile implements DbFile {
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
+		int expectedSize = (page.getNumEntries() + leftSibling.getNumEntries()) / 2;
+		int moveSize = expectedSize - page.getNumEntries();
+		if (moveSize <= 0) {
+			return;
+		}
+
+		// move the parent entry to right child, need to keep the left and right child
+		BTreeEntry midEntry = new BTreeEntry(parentEntry.getKey(), leftSibling.reverseIterator().next().getRightChild(), page.iterator().next().getLeftChild());
+		page.insertEntry(midEntry);
+		moveSize--;
+
+		Iterator<BTreeEntry> iterator = leftSibling.reverseIterator();
+		// move entry from right to left, need to delete right child
+		// otherwise the leftSibling can still get to the right child by accessing children[]
+		while (iterator.hasNext() && moveSize > 0) {
+			BTreeEntry next = iterator.next();
+			leftSibling.deleteKeyAndRightChild(next);
+			page.insertEntry(next);
+			moveSize--;
+		}
+
+		BTreeEntry newParentEntry = iterator.next();
+		leftSibling.deleteKeyAndRightChild(newParentEntry);
+		parentEntry.setKey(newParentEntry.getKey());
+		parent.updateEntry(parentEntry);
+
+		updateParentPointers(tid, dirtypages, page);
+
+		dirtypages.put(leftSibling.getId(), leftSibling);
+		dirtypages.put(page.getId(), page);
+		dirtypages.put(parent.getId(), parent);
 	}
-	
+
 	/**
 	 * Steal entries from the right sibling and copy them to the given page so that both pages are at least
-	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the 
+	 * half full. Keys can be thought of as rotating through the parent entry, so the original key in the
 	 * parent is "pulled down" to the left-hand page, and the last key in the right-hand page is "pushed up"
 	 * to the parent.  Update parent pointers as needed.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param page - the internal page which is less than half full
@@ -745,26 +795,57 @@ public class BTreeFile implements DbFile {
 	 * @param parent - the parent of the two internal pages
 	 * @param parentEntry - the entry in the parent pointing to the two internal pages
 	 * @see #updateParentPointers(TransactionId, Map, BTreeInternalPage)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws TransactionAbortedException
 	 */
 	public void stealFromRightInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
 			BTreeInternalPage page, BTreeInternalPage rightSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, TransactionAbortedException {
-		// some code goes here
         // Move some of the entries from the right sibling to the page so
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
+		int expectedSize = (page.getNumEntries() + rightSibling.getNumEntries()) / 2;
+		int moveSize = expectedSize - page.getNumEntries();
+		if (moveSize <= 0) {
+			return;
+		}
+
+		// move the parent entry to left child, need to keep the left and right child
+		BTreeEntry midEntry = new BTreeEntry(parentEntry.getKey(), page.reverseIterator().next().getRightChild(), rightSibling.iterator().next().getLeftChild());
+		page.insertEntry(midEntry);
+		moveSize--;
+
+		Iterator<BTreeEntry> iterator = rightSibling.iterator();
+		// move entry from right to left, need to delete left child
+		// otherwise the rightSibling can still get to the left child by accessing children[]
+		while (iterator.hasNext() && moveSize > 0) {
+			BTreeEntry next = iterator.next();
+			rightSibling.deleteKeyAndLeftChild(next);
+			page.insertEntry(next);
+			moveSize--;
+		}
+
+		BTreeEntry newParentEntry = iterator.next();
+		rightSibling.deleteKeyAndLeftChild(newParentEntry);
+		parentEntry.setKey(newParentEntry.getKey());
+		parent.updateEntry(parentEntry);
+
+
+		updateParentPointers(tid, dirtypages, page);
+
+		dirtypages.put(rightSibling.getId(), rightSibling);
+		dirtypages.put(page.getId(), page);
+		dirtypages.put(parent.getId(), parent);
 	}
-	
+
 	/**
-	 * Merge two leaf pages by moving all tuples from the right page to the left page. 
-	 * Delete the corresponding key and right child pointer from the parent, and recursively 
+	 * Merge two leaf pages by moving all tuples from the right page to the left page.
+	 * Delete the corresponding key and right child pointer from the parent, and recursively
 	 * handle the case when the parent gets below minimum occupancy.
 	 * Update sibling pointers as needed, and make the right page available for reuse.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param leftPage - the left leaf page
@@ -772,30 +853,47 @@ public class BTreeFile implements DbFile {
 	 * @param parent - the parent of the two pages
 	 * @param parentEntry - the entry in the parent corresponding to the leftPage and rightPage
 	 * @see #deleteParentEntry(TransactionId, Map, BTreePage, BTreeInternalPage, BTreeEntry)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws IOException
 	 * @throws TransactionAbortedException
 	 */
 	public void mergeLeafPages(TransactionId tid, Map<PageId, Page> dirtypages,
-			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
+			BTreeLeafPage leftPage, BTreeLeafPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry)
 					throws DbException, IOException, TransactionAbortedException {
-
-		// some code goes here
-        //
 		// Move all the tuples from the right page to the left page, update
 		// the sibling pointers, and make the right page available for reuse.
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+		leftPage.setRightSiblingId(rightPage.getRightSiblingId());
+		if (rightPage.getRightSiblingId() != null) {
+			BTreeLeafPage rightRightPage = (BTreeLeafPage) getPage(tid, dirtypages, rightPage.getRightSiblingId(), Permissions.READ_WRITE);
+			rightRightPage.setLeftSiblingId(leftPage.getId());
+			dirtypages.put(rightRightPage.getId(), rightRightPage);
+		}
+
+		Iterator<Tuple> iterator = rightPage.iterator();
+		while (iterator.hasNext()) {
+			Tuple next = iterator.next();
+			rightPage.deleteTuple(next);
+			leftPage.insertTuple(next);
+		}
+
+		setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+		deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
+
+		dirtypages.put(leftPage.getId(), leftPage);
+		dirtypages.put(parent.getId(), parent);
+		dirtypages.remove(rightPage.getId());
 	}
 
 	/**
-	 * Merge two internal pages by moving all entries from the right page to the left page 
-	 * and "pulling down" the corresponding key from the parent entry. 
-	 * Delete the corresponding key and right child pointer from the parent, and recursively 
+	 * Merge two internal pages by moving all entries from the right page to the left page
+	 * and "pulling down" the corresponding key from the parent entry.
+	 * Delete the corresponding key and right child pointer from the parent, and recursively
 	 * handle the case when the parent gets below minimum occupancy.
 	 * Update parent pointers as needed, and make the right page available for reuse.
-	 * 
+	 *
 	 * @param tid - the transaction id
 	 * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
 	 * @param leftPage - the left internal page
@@ -804,22 +902,35 @@ public class BTreeFile implements DbFile {
 	 * @param parentEntry - the entry in the parent corresponding to the leftPage and rightPage
 	 * @see #deleteParentEntry(TransactionId, Map, BTreePage, BTreeInternalPage, BTreeEntry)
 	 * @see #updateParentPointers(TransactionId, Map, BTreeInternalPage)
-	 * 
+	 *
 	 * @throws DbException
 	 * @throws IOException
 	 * @throws TransactionAbortedException
 	 */
 	public void mergeInternalPages(TransactionId tid, Map<PageId, Page> dirtypages,
-			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry) 
+			BTreeInternalPage leftPage, BTreeInternalPage rightPage, BTreeInternalPage parent, BTreeEntry parentEntry)
 					throws DbException, IOException, TransactionAbortedException {
-		
-		// some code goes here
-        //
         // Move all the entries from the right page to the left page, update
-		// the parent pointers of the children in the entries that were moved, 
+		// the parent pointers of the children in the entries that were moved,
 		// and make the right page available for reuse
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
+		leftPage.insertEntry(new BTreeEntry(parentEntry.getKey(), leftPage.reverseIterator().next().getRightChild(), rightPage.iterator().next().getLeftChild()));
+		deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
+
+		Iterator<BTreeEntry> iterator = rightPage.iterator();
+		while (iterator.hasNext()) {
+			BTreeEntry next = iterator.next();
+			rightPage.deleteKeyAndLeftChild(next);
+			leftPage.insertEntry(next);
+		}
+
+		setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+		updateParentPointers(tid, dirtypages, leftPage);
+
+		dirtypages.put(leftPage.getId(), leftPage);
+		dirtypages.put(parent.getId(), parent);
+		dirtypages.remove(rightPage.getId());
 	}
 	
 	/**
