@@ -144,7 +144,18 @@ public class BufferPool {
         // not necessary for lab1|lab2
         if (commit) {
             try {
-                flushPages(tid);
+                for (PageId pid : pageCache.keySet()) {
+                    Page page = pageCache.internalGet(pid);
+                    if (page != null) {
+                        if (page.isDirty() != null && page.isDirty().equals(tid)) {
+                            flushPage(pid);
+                        }
+                        // use current page contents as the before-image
+                        // for the next transaction that modifies this page.
+                        page.setBeforeImage();
+                    }
+                }
+
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -162,6 +173,7 @@ public class BufferPool {
                 pageCache.discard(pid);
                 try {
                     Page cleanPage = Database.getBufferPool().getPage(tid, pid, Permissions.READ_ONLY);
+                    cleanPage.markDirty(false, null);
                     pageCache.put(pid, cleanPage);
                 } catch (TransactionAbortedException e) {
                     e.printStackTrace();
@@ -260,8 +272,6 @@ public class BufferPool {
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
         for (PageId pid : pageCache.keySet()) {
             Page page = pageCache.internalGet(pid);
             if (page != null && page.isDirty() != null && page.isDirty().equals(tid)) {
@@ -279,16 +289,16 @@ public class BufferPool {
         if (evicted == null) {
             return;
         }
-
-//        try {
-//            flushPage(evicted.getKey(), evicted.getValue());
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
     }
 
     private void flushPage(PageId pid, Page page) throws IOException {
         if (page != null && page.isDirty() != null) {
+            // append an update record to the log, with
+            // a before-image and after-image.
+            TransactionId dirtier = page.isDirty();
+            Database.getLogFile().logWrite(dirtier, page.getBeforeImage(), page);
+            Database.getLogFile().force();
+
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
             page.markDirty(false, null);
         }

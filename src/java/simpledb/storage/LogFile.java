@@ -460,6 +460,43 @@ public class LogFile {
             synchronized(this) {
                 preAppend();
                 // some code goes here
+                Long offset = tidToFirstLogRecord.get(tid.getId());
+                raf.seek(offset);
+
+                while (true) {
+                    try {
+                        int cpType = raf.readInt();
+                        long cpTid = raf.readLong();
+
+                        switch (cpType) {
+                            case BEGIN_RECORD:
+                            case ABORT_RECORD:
+                            case COMMIT_RECORD:
+                                break;
+                            case CHECKPOINT_RECORD:
+                                int numTransactions = raf.readInt();
+                                // skip all transactionId (long) and firstRecordId (long)
+                                raf.seek(raf.getFilePointer() + (numTransactions * 16));
+                                break;
+                            case UPDATE_RECORD:
+                                Page before = readPageData(raf);
+                                Page after = readPageData(raf);
+                                if (tid.getId() == cpTid) {
+                                    Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                                    Database.getBufferPool().discardPage(after.getId());
+                                    // skip the long offset at the end. MUST SKIP HERE since we are returning!
+                                    raf.seek(raf.getFilePointer() + 8);
+                                    // always only write the very first before image of all the updates in the transaction
+                                    return;
+                                }
+                                break;
+                        }
+                        raf.seek(raf.getFilePointer() + 8); // skip the long offset at the end
+                    } catch (EOFException e) {
+                        //e.printStackTrace();
+                        break;
+                    }
+                }
             }
         }
     }
@@ -487,8 +524,85 @@ public class LogFile {
             synchronized (this) {
                 recoveryUndecided = false;
                 // some code goes here
+                HashMap<Long, List<Page[]>> loserMap = new HashMap<>();
+                raf.seek(0);
+                long checkpoint = raf.readLong();
+                if (checkpoint != -1) {
+                    raf.seek(checkpoint);
+                    raf.seek(raf.getFilePointer() + 12); // skip record type (int) and tid (long)
+                    int numTransactions = raf.readInt();
+                    List<Long> firstRecords = new ArrayList<>();
+                    while (numTransactions-- > 0) {
+                        long tid = raf.readLong();
+                        long firstRecord = raf.readLong();
+                        firstRecords.add(firstRecord);
+                    }
+
+                    // redo each transaction. We cannot redo when reading the checkpoint record, because that
+                    // will mess up the raf pointer. Collect all the record pos and do it here altogether
+                    for (long firstRecord : firstRecords) {
+                        raf.seek(firstRecord);
+                        redoAndCollectLosers(raf, loserMap);
+                    }
+                } else {
+                    redoAndCollectLosers(raf, loserMap);
+                }
+
+                // un-do
+                for (Long tid : loserMap.keySet()) {
+                    if (!loserMap.get(tid).isEmpty()) {
+                        Page[] pages = loserMap.get(tid).get(0);  // get the very first page
+                        Page before = pages[0];
+                        Database.getCatalog().getDatabaseFile(before.getId().getTableId()).writePage(before);
+                    }
+                }
+                loserMap.clear();
             }
          }
+    }
+
+    private void redoAndCollectLosers(RandomAccessFile raf, HashMap<Long, List<Page[]>> loserMap) throws IOException {
+        while (true) {
+            try {
+                int cpType = raf.readInt();
+                long cpTid = raf.readLong();
+                if (!loserMap.containsKey(cpTid)) {
+                    loserMap.put(cpTid, new ArrayList<>());
+                }
+                switch (cpType) {
+                    case ABORT_RECORD:
+                        if (!loserMap.get(cpTid).isEmpty()) {
+                            Page[] firstPages = loserMap.get(cpTid).get(0);  // get the very first page
+                            Database.getCatalog().getDatabaseFile(firstPages[0].getId().getTableId()).writePage(firstPages[0]);
+                            loserMap.remove(cpTid);
+                        }
+                        break;
+                    case COMMIT_RECORD:
+                        if (!loserMap.get(cpTid).isEmpty()) {
+                            Page[] lastPages = loserMap.get(cpTid).get(loserMap.get(cpTid).size() - 1);  // get the very last page
+                            Database.getCatalog().getDatabaseFile(lastPages[1].getId().getTableId()).writePage(lastPages[1]);
+                            loserMap.remove(cpTid);
+                        }
+                        break;
+                    case UPDATE_RECORD:
+                        Page before = readPageData(raf);
+                        Page after = readPageData(raf);
+                        // we only need the first and last before+after, when the list have size == 2, overwrite the last element
+                        // to be the latest before+after
+                        List<Page[]> list = loserMap.get(cpTid);
+                        if (list.size() == 2) {
+                            list.set(1, new Page[]{before, after});
+                        } else {
+                            list.add(new Page[]{before, after});
+                        }
+                        break;
+                }
+                raf.seek(raf.getFilePointer() + 8); // skip the long offset at the end
+            } catch (EOFException e) {
+                //e.printStackTrace();
+                break;
+            }
+        }
     }
 
     /** Print out a human readable represenation of the log */
